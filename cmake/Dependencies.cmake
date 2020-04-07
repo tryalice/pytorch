@@ -959,6 +959,10 @@ endif()
 # ---[ Android specific ones
 if(ANDROID)
   list(APPEND Caffe2_DEPENDENCY_LIBS log)
+
+  if(USE_VULKANGL)
+    list(APPEND Caffe2_DEPENDENCY_LIBS EGL GLESv3)
+  endif()
 endif()
 
 # ---[ LLVM
