@@ -5353,6 +5353,17 @@ def add_neg_dim_tests():
 class TestTorchDeviceType(TestCase):
     exact_dtype = True
 
+    def test_isclose_bool(self, device):
+        pass
+
+    @dtypes(torch.uint8,
+            torch.int8, torch.int16, torch.int32, torch.int64,
+            torch.float16, torch.float32, torch.float64,
+            torch.complex64, torch.complex128)
+    def test_isclose(self, device, dtype):
+        pass
+
+
     def check_internal_mem_overlap(self, inplace_op, num_inputs,
                                    dtype, device,
                                    expected_failure=False):
