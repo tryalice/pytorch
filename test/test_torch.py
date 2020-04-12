@@ -5363,7 +5363,6 @@ class TestTorchDeviceType(TestCase):
     def test_isclose(self, device, dtype):
         pass
 
-
     def check_internal_mem_overlap(self, inplace_op, num_inputs,
                                    dtype, device,
                                    expected_failure=False):
