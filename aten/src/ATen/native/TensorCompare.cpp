@@ -18,11 +18,7 @@ bool allclose(const Tensor& self, const Tensor& other, double rtol, double atol,
   return at::isclose(self, other, rtol, atol, equal_nan).all().item<uint8_t>();
 }
 
-Tensor isclose(const Tensor& self, const Tensor& other, double rtol, double atol, bool equal_nan) {
-  // TODO: use bitwise operator overloads once we add them
-
-  TORCH_CHECK(self.scalar_type() == other.scalar_type(), self.scalar_type(), " did not match ", other.scalar_type())
-
+Tensor isclose_helper(const Tensor& self, const Tensor& other, double rtol, double atol, bool equal_nan) {
   // The original formula `atol + rtol * other.abs()` works incorrectly when
   // `other` has integral dtype and `other == min_value` and `abs(min_value)` is negative:
   // std::abs(std::numeric_limits<int64_t>::lowest()) == std::numeric_limits<int64_t>::lowest() < 0
@@ -54,7 +50,25 @@ Tensor isclose(const Tensor& self, const Tensor& other, double rtol, double atol
       close.__ior__((self != self).__and__((other != other)));
     }
   }
+
   return close;
+}
+
+Tensor isclose(const Tensor& self, const Tensor& other, double rtol, double atol, bool equal_nan) {
+  // TODO: use bitwise operator overloads once we add them
+
+  TORCH_CHECK(self.scalar_type() == other.scalar_type(), self.scalar_type(), " did not match ", other.scalar_type())
+
+  // Note: two complex values are "close" if both their real and imaginary
+  // parts are "close".
+  if (self.isComplex()) {
+    Tensor isclose_real = isclose_helper(self.copy_real(), other.copy_real(), rtol, atol, equal_nan);
+    Tensor isclose_imag = isclose_helper(self.copy_imag(), other.copy_imag(), rtol, atol, equal_nan);
+    isclose_real.__iand__(isclose_imag);
+    return isclose_real;
+  }
+
+  return isclose_helper(self, other, rtol, atol, equal_nan);
 }
 
 Tensor isnan(const Tensor& self) {
