@@ -5353,15 +5353,116 @@ def add_neg_dim_tests():
 class TestTorchDeviceType(TestCase):
     exact_dtype = True
 
-    def test_isclose_bool(self, device):
-        pass
+    def _isclose_helper(self, tests, device, dtype, equal_nan):
+        for test in tests:
+            a = torch.tensor((test[0],), device=device, dtype=dtype)
+            b = torch.tensor((test[1],), device=device, dtype=dtype)
 
+            actual = torch.isclose(a, b, equal_nan=equal_nan)
+            expected = test[2]
+            self.assertEqual(actual.item(), expected)
+
+    # torch.close is not implemented for bool tensors
+    # see https://github.com/pytorch/pytorch/issues/33048
+    def test_isclose_bool(self, device):
+        tests = (
+            (True, True, True),
+            (False, False, True),
+            (True, False, False),
+            (False, True, False),
+        )
+
+        with self.assertRaises(RuntimeError):
+            self._isclose_helper(tests, device, torch.bool, False)
+
+    @unittest.skipIf(not TEST_NUMPY, 'NumPy not found')
     @dtypes(torch.uint8,
+            torch.int8, torch.int16, torch.int32, torch.int64)
+    def test_isclose_integer(self, device, dtype):
+        tests = (
+            (0, 0, True),
+            (0, 1, False),
+            (1, 0, False),
+        )
+
+        self._isclose_helper(tests, device, dtype, False)
+
+    # torch.close is not implemented for cpu half tensors
+    # see https://github.com/pytorch/pytorch/issues/36451
+    @unittest.skipIf(not TEST_NUMPY, 'NumPy not found')
+    @dtypes(torch.float16, torch.float32, torch.float64)
+    def test_isclose_float(self, device, dtype):
+        tests = (
+            (0, 0, True),
+            (0, -1, False),
+            (float('inf'), float('inf'), True),
+            (-float('inf'), float('inf'), False),
+            (float('inf'), float('nan'), False),
+            (float('nan'), float('nan'), False),
+            (0, float('nan'), False),
+            (1, 1, True),
+        )
+
+        if dtype is torch.half and self.device_type == 'cpu':
+            with self.assertRaises(RuntimeError):
+                self._isclose_helper(tests, device, dtype, False)
+        else:
+            self._isclose_helper(tests, device, dtype, False)
+
+        tests = (
+            (0, float('nan'), False),
+            (float('inf'), float('nan'), False),
+            (float('nan'), float('nan'), True),
+        )
+
+        if dtype is torch.half and self.device_type == 'cpu':
+            with self.assertRaises(RuntimeError):
+                self._isclose_helper(tests, device, dtype, True)
+        else:
+            self._isclose_helper(tests, device, dtype, True)
+
+    @unittest.skipIf(not TEST_NUMPY, 'NumPy not found')
+    @dtypes(torch.complex64, torch.complex128)
+    def test_isclose_complex(self, device, dtype):
+        tests = (
+            ((1 + 1j), complex(1, 1 + 1e-8), True),
+            ((0 + 1j), (1 + 1j), False),
+            ((1 + 1j), (1 + 0j), False),
+            ((1 + 1j), complex(1, float('nan')), False),
+            ((1 + 1j), complex(1, float('inf')), False),
+            ((float('inf') + 1j), complex(1, float('inf')), False),
+            ((-float('inf') + 1j), complex(1, float('inf')), False),
+            ((-float('inf') + 1j), complex(float('inf'), 1), False),
+            ((-float('inf') + 1j), (-float('inf') + 1j), True),
+        )
+
+        self._isclose_helper(tests, device, dtype, False)
+
+        tests = (
+            ((1 + 1j), complex(1, float('nan')), False),
+            ((float('nan') + 1j), complex(1, float('nan')), False),
+            ((float('nan') + 1j), complex(1, 1), False),
+            ((float('nan') + 1j), complex(float('nan'), 1), True),
+            ((float('nan') + 1j), complex(float('nan'), 2), False),
+            (complex(float('nan'), float('nan')), complex(float('nan'), float('nan')), True),
+            ((float('nan') + 1j), complex(float('inf'), 1), False),
+        )
+
+        self._isclose_helper(tests, device, dtype, True)
+
+    # Tests that rtol or atol values less than zero thow RuntimeErrors
+    @dtypes(torch.bool, torch.uint8,
             torch.int8, torch.int16, torch.int32, torch.int64,
-            torch.float16, torch.float32, torch.float64,
-            torch.complex64, torch.complex128)
-    def test_isclose(self, device, dtype):
-        pass
+            torch.float16, torch.float32, torch.float64)
+    def test_isclose_atol_rtol_greater_than_zero(self, device, dtype):
+        t = torch.tensor((1,), device=device, dtype=dtype)
+
+        with self.assertRaises(RuntimeError):
+            torch.isclose(t, t, atol=-1, rtol=1)
+        with self.assertRaises(RuntimeError):
+            torch.isclose(t, t, atol=1, rtol=-1)
+        with self.assertRaises(RuntimeError):
+            torch.isclose(t, t, atol=-1, rtol=-1)
 
     def check_internal_mem_overlap(self, inplace_op, num_inputs,
                                    dtype, device,

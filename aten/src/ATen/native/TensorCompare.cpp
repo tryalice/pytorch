@@ -56,14 +56,22 @@ Tensor isclose_helper(const Tensor& self, const Tensor& other, double rtol, doub
 
 Tensor isclose(const Tensor& self, const Tensor& other, double rtol, double atol, bool equal_nan) {
   // TODO: use bitwise operator overloads once we add them
-
   TORCH_CHECK(self.scalar_type() == other.scalar_type(), self.scalar_type(), " did not match ", other.scalar_type())
 
+  // Note: Due to an implementation quirk of isclose_helper we don't handle negative
+  // rtol or atol values properly. There also doesn't seem to be a use case
+  // for negative rtol or atol values, so we simply don't allow them.
+  TORCH_CHECK(rtol >= 0, "rtol must be greater than or equal to zero, but got ", rtol);
+  TORCH_CHECK(atol >= 0, "atol must be greater than or equal to zero, but got ", atol);
+
+  // TODO: update once complex abs returns float
   // Note: two complex values are "close" if both their real and imaginary
-  // parts are "close".
-  if (self.isComplex()) {
-    Tensor isclose_real = isclose_helper(self.copy_real(), other.copy_real(), rtol, atol, equal_nan);
-    Tensor isclose_imag = isclose_helper(self.copy_imag(), other.copy_imag(), rtol, atol, equal_nan);
+  // parts are "close". This is divergent from NumPy, which exhibits strange
+  // behavior when testing complex tensors for "closeness".
+  if (self.is_complex()) {
+    const auto float_type = c10::toValueType(self.scalar_type());
+    Tensor isclose_real = isclose_helper(self.copy_real().to(float_type), other.copy_real().to(float_type), rtol, atol, equal_nan);
+    Tensor isclose_imag = isclose_helper(self.copy_imag().to(float_type), other.copy_imag().to(float_type), rtol, atol, equal_nan);
     isclose_real.__iand__(isclose_imag);
     return isclose_real;
   }
