@@ -5355,6 +5355,7 @@ class TestTorchDeviceType(TestCase):
 
     def _isclose_helper(self, tests, device, dtype, equal_nan):
         for test in tests:
+            print(test)
             a = torch.tensor((test[0],), device=device, dtype=dtype)
             b = torch.tensor((test[1],), device=device, dtype=dtype)
 
@@ -5434,6 +5435,8 @@ class TestTorchDeviceType(TestCase):
             ((-float('inf') + 1j), complex(1, float('inf')), False),
             ((-float('inf') + 1j), complex(float('inf'), 1), False),
             ((-float('inf') + 1j), (-float('inf') + 1j), True),
+            ((-float('inf') + 1j), complex(-float('inf'), 1 + 1e-4), False),
+            ((0 + 1j), complex(0, 1 + 1e-8), True),
         )
 
         self._isclose_helper(tests, device, dtype, False)

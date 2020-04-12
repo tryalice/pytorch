@@ -18,7 +18,60 @@ bool allclose(const Tensor& self, const Tensor& other, double rtol, double atol,
   return at::isclose(self, other, rtol, atol, equal_nan).all().item<uint8_t>();
 }
 
-Tensor isclose_helper(const Tensor& self, const Tensor& other, double rtol, double atol, bool equal_nan) {
+Tensor isclose(const Tensor& self, const Tensor& other, double rtol, double atol, bool equal_nan) {
+  // TODO: use bitwise operator overloads once we add them
+  TORCH_CHECK(self.scalar_type() == other.scalar_type(), self.scalar_type(), " did not match ", other.scalar_type())
+
+  // Checks that rtol and atol are non-negative
+  // Note: consistent with Python
+  TORCH_CHECK(rtol >= 0, "rtol must be greater than or equal to zero, but got ", rtol);
+  TORCH_CHECK(atol >= 0, "atol must be greater than or equal to zero, but got ", atol);
+
+  // Implements isclose for complex tensors, consistent with
+  // Python's cmath.isclose().
+  // Note: in Python, inf and -inf are only close to inf and -inf, respectively,
+  // and NaN is close to nothing (not even itself). Python does not have a
+  // equal_nan argument, but when equal_nan is set this assumes NaN is close
+  // to itself, too.
+  // Complex numbers that contain inf, -inf, or NaN values are only close
+  // to other complex numbers they're identical to.
+  if (self.is_complex()) {
+    const auto float_type = c10::toValueType(self.scalar_type());
+
+    // Acquires the real and imaginary parts of the tensors
+    Tensor self_real = self.copy_real().to(float_type);
+    Tensor other_real = other.copy_real().to(float_type);
+    Tensor self_imag = self.copy_imag().to(float_type);
+    Tensor other_imag = other.copy_imag().to(float_type);
+
+    // Identical complex numbers are close to each other
+    Tensor equal_mask = (self == other);
+    if (equal_nan) {
+      // Handles real NaN and identical imaginary
+      Tensor real_nan_mask = (self_real != self_real).__and__(other_real != other_real);
+      equal_mask.__ior__(real_nan_mask.__and__(self_imag == other_imag));
+
+      // Handles imaginary NaN and identical real
+      Tensor imag_nan_mask = (self_imag != self_imag).__and__(other_imag != other_imag);
+      equal_mask.__ior__(imag_nan_mask.__and__(self_real == other_real));
+
+      // Handles real and imaginary NaN
+      equal_mask.__ior__(real_nan_mask.__and__(imag_nan_mask));
+    }
+
+    // Computes error as usual
+    Tensor actual_error = (self - other).abs().to(float_type);
+    Tensor max_error = atol + rtol * other.abs().to(float_type);
+    Tensor close = actual_error <= max_error;
+
+    // Applies error-based closeness only when it's finite
+    // Note: NaN and inf cases are handled above
+    close.__iand__(at::isfinite(actual_error));
+    close.__ior__(equal_mask);
+
+    return close;
+  }
+
   // The original formula `atol + rtol * other.abs()` works incorrectly when
   // `other` has integral dtype and `other == min_value` and `abs(min_value)` is negative:
   // std::abs(std::numeric_limits<int64_t>::lowest()) == std::numeric_limits<int64_t>::lowest() < 0
@@ -52,31 +105,6 @@ Tensor isclose_helper(const Tensor& self, const Tensor& other, double rtol, doub
   }
 
   return close;
-}
-
-Tensor isclose(const Tensor& self, const Tensor& other, double rtol, double atol, bool equal_nan) {
-  // TODO: use bitwise operator overloads once we add them
-  TORCH_CHECK(self.scalar_type() == other.scalar_type(), self.scalar_type(), " did not match ", other.scalar_type())
-
-  // Note: Due to an implementation quirk of isclose_helper we don't handle negative
-  // rtol or atol values properly. There also doesn't seem to be a use case
-  // for negative rtol or atol values, so we simply don't allow them.
-  TORCH_CHECK(rtol >= 0, "rtol must be greater than or equal to zero, but got ", rtol);
-  TORCH_CHECK(atol >= 0, "atol must be greater than or equal to zero, but got ", atol);
-
-  // TODO: update once complex abs returns float
-  // Note: two complex values are "close" if both their real and imaginary
-  // parts are "close". This is divergent from NumPy, which exhibits strange
-  // behavior when testing complex tensors for "closeness".
-  if (self.is_complex()) {
-    const auto float_type = c10::toValueType(self.scalar_type());
-    Tensor isclose_real = isclose_helper(self.copy_real().to(float_type), other.copy_real().to(float_type), rtol, atol, equal_nan);
-    Tensor isclose_imag = isclose_helper(self.copy_imag().to(float_type), other.copy_imag().to(float_type), rtol, atol, equal_nan);
-    isclose_real.__iand__(isclose_imag);
-    return isclose_real;
-  }
-
-  return isclose_helper(self, other, rtol, atol, equal_nan);
 }
 
 Tensor isnan(const Tensor& self) {
