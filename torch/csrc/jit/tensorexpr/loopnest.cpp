@@ -396,7 +396,7 @@ class Flattener : public IRMutator {
   Expr* mutate(const FunctionCall* v) override {
     const Tensor* t = v->tensor();
     const Buf* b = t->buf();
-    Buffer buffer(BufHandle(b), t->body()->dtype());
+    Buffer buffer = Buffer(BufHandle(b));
     const std::vector<const Expr*>& params = v->params();
     std::vector<ExprHandle> params_expr(params.size());
     for (size_t i = 0; i < params.size(); i++) {
@@ -788,11 +788,10 @@ Stmt* LoopNest::insertAllocFree(Stmt* stmt) {
     b->prepend_stmt(alloc);
     b->append_stmt(free);
   }
-  for (const auto& temp_buf : temp_bufs_) {
-    const Buf* buf = temp_buf.first;
-    Stmt* alloc =
-        new Allocate(buf->base_handle(), temp_buf.second, buf->dims());
-    Stmt* free = new Free(buf->base_handle());
+  for (const Buf* temp_buf : temp_bufs_) {
+    Stmt* alloc = new Allocate(
+        temp_buf->base_handle(), temp_buf->dtype(), temp_buf->dims());
+    Stmt* free = new Free(temp_buf->base_handle());
     b->prepend_stmt(alloc);
     b->append_stmt(free);
   }
@@ -1187,7 +1186,7 @@ void LoopNest::computeAt(Stmt* s, For* f) {
 
   // TODO: Use name-hint of the producer instead of "temp"
   const Buf* temp_buf =
-      new Buf(new Var("temp", store_bounds_info.buf->dtype()), dims);
+      new Buf(new Var("temp", kHandle), dims, st->value()->dtype());
 
   // Generate index variables for 'temp'
   std::vector<const Expr*> temp_indices(dims.size());
@@ -1243,7 +1242,7 @@ void LoopNest::computeAt(Stmt* s, For* f) {
 
   // Mark the new temp buffer as requiring an alloc (it will be inserted as a
   // part of prepareForCodegen).
-  temp_bufs_.emplace_back(std::make_pair(temp_buf, st->value()->dtype()));
+  temp_bufs_.emplace_back(temp_buf);
 }
 
 } // namespace tensorexpr
