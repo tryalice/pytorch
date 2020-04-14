@@ -2052,10 +2052,6 @@ class TestQuantizedConv(unittest.TestCase):
         Y_q = qconv_fn(
             X_q,
             W_prepack,
-            strides,
-            pads,
-            dilations,
-            groups,
             Y_scale,
             Y_zero_point,
         )
