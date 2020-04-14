@@ -61,6 +61,7 @@ std::vector<std::string> _quantizable_aten_funcs = {
     "add_",
     "add",
     "cat",
+    "lstm",
 };
 
 // These are the prim::CallFunctions that doesn't require observation and
@@ -675,24 +676,26 @@ graph(%self, %a, %b, %inplace):
 };
 
 // Check if `use` is an aten function of name `func_name` and if value
-// `v` is the nth argument of the function
-bool isAtenFuncNthArg(
-    Value* v,
-    Node* use,
+// `v` is the nth argument (if provided) of the function.
+bool matchAtenFuncToUse(
+    const Use& use,
     const std::string& func_name,
-    int n) {
-  return use->kind() == Symbol::aten(func_name) && v == use->inputs().at(n);
+    c10::optional<int> n) {
+  Node* node = use.user;
+  return node->kind() == Symbol::aten(func_name) &&
+      (n.has_value() ? (n.value() == use.offset) : true);
 }
 
 // Check if `use` is a CallFunction of name `func_name` and if value
-// `v` is the nth argument of the function
-bool isCallFunctionNthArg(
-    Value* v,
-    Node* use,
+// `v` is the nth argument (if provided) of the function
+bool matchCallFuncToUse(
+    const Use& use,
     const std::string& func_name,
-    int n) {
-  return use->kind() == prim::CallFunction &&
-      getFuncName(use->inputs()[0]) == func_name && v == use->inputs().at(n);
+    c10::optional<int> n) {
+  Node* node = use.user;
+  return node->kind() == prim::CallFunction &&
+      getFuncName(node->inputs()[0]) == func_name &&
+      (n.has_value() ? (n.value() == use.offset) : false);
 }
 
 struct FuncArg {
@@ -710,14 +713,13 @@ bool matchArgPattern(
     const CallFuncArgs& call_func_args) {
   for (const Use& u : v->uses()) {
     for (const auto& func_arg : aten_func_args) {
-      if (isAtenFuncNthArg(v, u.user, func_arg.func_name, func_arg.arg_index)) {
+      if (matchAtenFuncToUse(u, func_arg.func_name, func_arg.arg_index)) {
         return true;
       }
     }
 
     for (const auto& func_arg : call_func_args) {
-      if (isCallFunctionNthArg(
-              v, u.user, func_arg.func_name, func_arg.arg_index)) {
+      if (matchCallFuncToUse(u, func_arg.func_name, func_arg.arg_index)) {
         return true;
       }
     }
@@ -986,10 +988,29 @@ void InsertObserversHelper::preprocess(
   }
 }
 
-// Returns true if the value is the weight to LSTM operator.
-bool isDynamicLSTMWeight(Value* v, Use use, bool is_dynamic) {
-  return is_dynamic && use.user->kind() == Symbol::aten("lstm") &&
-      (use.offset == 2);
+bool useQuantizable(const Use& use, bool is_dynamic) {
+  bool result = nodeQuantizable(use.user);
+  if (!result) {
+    return false;
+  }
+  // Special checks for ops that do not require observers for all input tensors.
+  // For each operator in this list observers are inserted for the input based
+  // on the index specified.
+  const AtenFuncArgs& aten_func_args = AtenFuncArgs({{"lstm", 2}});
+  const CallFuncArgs& call_func_args = CallFuncArgs({});
+  for (const auto& func_arg : aten_func_args) {
+    if (matchAtenFuncToUse(use, func_arg.func_name, c10::nullopt)) {
+      return use.offset == func_arg.arg_index;
+    }
+  }
+
+  for (const auto& func_arg : call_func_args) {
+    if (matchCallFuncToUse(use, func_arg.func_name, c10::nullopt)) {
+      return use.offset == func_arg.arg_index;
+    }
+  }
+
+  return result;
 }
 
 // TODO: remove this as a class method
@@ -1007,9 +1028,9 @@ bool InsertObserversHelper::valueNeedsToBeQuantized(Value* v) {
       return true;
     }
   }
-  // Check whether user is quantizable
+  // Check whether node input value is quantizable
   for (const auto& use : v->uses()) {
-    if (nodeQuantizable(use.user) || isDynamicLSTMWeight(v, use, is_dynamic)) {
+    if (useQuantizable(use, is_dynamic)) {
       return true;
     }
   }
