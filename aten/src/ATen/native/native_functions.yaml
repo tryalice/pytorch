@@ -5707,6 +5707,7 @@
   python_module: nn
   dispatch:
     CPU: hardsigmoid
+    CUDA: hardsigmoid
     QuantizedCPU: quantized_hardsigmoid
 
 - func: hardsigmoid_(Tensor(a!) self) -> Tensor(a!)
