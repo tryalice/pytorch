@@ -50,6 +50,7 @@ struct PatternsAndModules {
 std::vector<std::string> _quantizable_call_funcs = {
     "conv2d",
     "linear",
+    "batch_norm",
 };
 
 std::vector<std::string> _quantizable_aten_funcs = {
@@ -997,7 +998,7 @@ bool useQuantizable(const Use& use, bool is_dynamic) {
   // For each operator in this list observers are inserted for the input based
   // on the index specified.
   const AtenFuncArgs& aten_func_args = AtenFuncArgs({{"lstm", 2}});
-  const CallFuncArgs& call_func_args = CallFuncArgs({});
+  const CallFuncArgs& call_func_args = CallFuncArgs({{"batch_norm", 1}});
   for (const auto& func_arg : aten_func_args) {
     if (matchAtenFuncToUse(use, func_arg.func_name, c10::nullopt)) {
       return use.offset == func_arg.arg_index;
