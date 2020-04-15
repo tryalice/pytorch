@@ -12,6 +12,7 @@ try:
     # import torch_test_cpp_extension.cpp as cpp_extension
     # import torch_test_cpp_extension.msnpu as msnpu_extension
     # import torch_test_cpp_extension.rng as rng_extension
+    import torch_test_cpp_extension.csprng as csprng_extension
 except ImportError:
     raise RuntimeError(
         "test_cpp_extensions_aot.py cannot be invoked directly. Run "
@@ -177,6 +178,39 @@ except ImportError:
 #         self.assertEqual(rng_extension.getInstanceCount(), 1)
 #         del copy2
 #         self.assertEqual(rng_extension.getInstanceCount(), 0)
+
+class TestCUDA_CSPRNG_Generator(common.TestCase):
+
+    def setUp(self):
+        super(TestCUDA_CSPRNG_Generator, self).setUp()
+        csprng_extension.registerOps()
+
+    def test_random(self):
+        gen = csprng_extension.create_CUDA_CSPRNG_Generator()
+        for dtype in [torch.bool, torch.uint8, torch.int8, torch.int16, 
+                      torch.int32, torch.int64, torch.float, torch.double]:
+            t = torch.empty(100, dtype=dtype, device='cuda').random_(generator=gen)
+            # print(t)
+
+    def test_rando2(self):
+        gen = csprng_extension.create_CUDA_CSPRNG_Generator()
+        s = torch.zeros(20, 20, dtype=torch.uint8, device='cuda')
+        t = s[:, 7]
+        self.assertFalse(t.is_contiguous())
+        t.random_(generator=gen)
+        t = s[7, :]
+        self.assertTrue(t.is_contiguous())
+        t.random_(generator=gen)
+        # print(s)
+
+    def test_uniform(self):
+        gen = csprng_extension.create_CUDA_CSPRNG_Generator()
+        size = 1000
+        for dtype in [torch.float, torch.double]:
+            t = torch.empty(size, dtype=dtype, device='cuda').uniform_(generator=gen)
+            # print('================================================== ' + str(dtype) + ' uniform =================================================')
+            # for elem in t:
+            #     print(elem.item())
 
 if __name__ == "__main__":
     common.run_tests()
