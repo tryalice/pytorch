@@ -4,6 +4,7 @@
 #include <torch/csrc/jit/ir/subgraph_matcher.h>
 #include <torch/csrc/jit/passes/onnx/helper.h>
 #include <torch/csrc/jit/passes/subgraph_rewrite.h>
+#include <ATen/native/quantized/cpu/packed_params.h>
 #include <stack>
 
 using ::c10::Dispatcher;
@@ -134,7 +135,7 @@ Node* CreateQuantizedBias(
 // caffe2::Int8GivenTensorFill nodes.
 void unpackQuantizedWeightsHelper(
     std::shared_ptr<Graph>& graph,
-    std::map<std::string, at::Tensor>& paramsDict,
+    std::map<std::string, IValue>& paramsDict,
     const std::string& pattern,
     const std::string& unpack_fn) {
   Graph pattern_graph;
@@ -153,13 +154,23 @@ void unpackQuantizedWeightsHelper(
       throw std::runtime_error(
           "getValues: Quantized weight value not found amongst constant parameters.");
     }
-    at::Tensor packed_weight = itr->second;
-    auto op = Dispatcher::singleton().findSchema({unpack_fn, ""});
-    assert(op.has_value());
-    std::tuple<at::Tensor, c10::optional<at::Tensor>> result = callOpUnboxed<
-        std::tuple<at::Tensor, c10::optional<at::Tensor>>,
-        at::Tensor>(*op, packed_weight);
-    at::Tensor unpacked_weight = std::get<0>(result);
+    at::Tensor unpacked_weight;
+    c10::optional<at::Tensor> bias;
+
+    if (itr->second.isObject()) {
+      // Pre-unpacked weights. Comes from Linear weights which are
+      // stored as bound C++ classes.
+      auto casted_obj = itr->second.toCustomClass<LinearPackedParamsBase>();
+      std::tie(unpacked_weight, bias) = casted_obj->unpack();
+    } else {
+      TORCH_INTERNAL_ASSERT(itr->second.isTensor());
+      at::Tensor packed_weight = itr->second.toTensor();
+      auto op = Dispatcher::singleton().findSchema({unpack_fn, ""});
+      assert(op.has_value());
+      std::tie(unpacked_weight, bias) = callOpUnboxed<
+          std::tuple<at::Tensor, c10::optional<at::Tensor>>,
+          at::Tensor>(*op, packed_weight);
+    }
 
     // Permute weights
     std::vector<int64_t> wt_sizes = unpacked_weight.sizes().vec();
@@ -194,8 +205,8 @@ void unpackQuantizedWeightsHelper(
 
     // Add bias
     at::Tensor original_bias;
-    if (std::get<1>(result).has_value()) {
-      original_bias = std::get<1>(result).value();
+    if (bias.has_value()) {
+      original_bias = bias.value();
       original_bias.set_requires_grad(false);
     } else {
       // Caffe2 ops always expect bias tensor so if not present create empty
@@ -240,7 +251,7 @@ void unpackQuantizedWeightsHelper(
 }
 void UnpackQuantizedWeights(
     std::shared_ptr<Graph>& graph,
-    std::map<std::string, at::Tensor>& paramsDict) {
+    std::map<std::string, IValue>& paramsDict) {
   std::string qlinear = R"(
   graph(%input, %packed_weight, %w_scale, %w_zero_point):
         %r = quantized::linear(%input, %packed_weight, %w_scale, %w_zero_point)
@@ -266,7 +277,7 @@ void UnpackQuantizedWeights(
 // conv op and add another permute from NHWC to NCHW after the conv op.
 void insertPermutesHelper(
     std::shared_ptr<Graph>& graph,
-    std::map<std::string, at::Tensor>& paramsDict,
+    std::map<std::string, IValue>& paramsDict,
     const std::string& pattern) {
   Graph pattern_graph;
   std::unordered_map<std::string, Value*> vmap;
@@ -298,7 +309,7 @@ void insertPermutesHelper(
 
 void insertPermutes(
     std::shared_ptr<Graph>& graph,
-    std::map<std::string, at::Tensor>& paramsDict) {
+    std::map<std::string, IValue>& paramsDict) {
   std::string qconv = R"(
   graph(%input, %weight, %bias, %stride, %padding, %dilation, %groups, %w_scale, %w_zero_point):
         %r = quantized::conv2d(%input, %weight, %bias, %stride, %padding, %dilation, %groups, %w_scale, %w_zero_point)
